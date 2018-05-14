@@ -1,12 +1,18 @@
 package com.coolweather.android;
 
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.os.Build;
 import android.preference.PreferenceManager;
+import android.support.v4.app.Fragment;
+import android.support.v4.view.GravityCompat;
+import android.support.v4.widget.DrawerLayout;
+import android.support.v4.widget.SwipeRefreshLayout;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.view.View;
+import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -16,6 +22,7 @@ import android.widget.Toast;
 import com.bumptech.glide.Glide;
 import com.coolweather.android.gson.Forecast;
 import com.coolweather.android.gson.Weather;
+import com.coolweather.android.service.AutoUpdateService;
 import com.coolweather.android.util.HttpUtil;
 import com.coolweather.android.util.Utility;
 
@@ -28,7 +35,10 @@ import okhttp3.Response;
 public class WeatherActivity extends AppCompatActivity {
 
     private ScrollView weatherLayout;
+    public SwipeRefreshLayout swipeRefresh; // 下拉刷新
     private ImageView backgroundImage; // 背景图片
+    private Button navButton; // 侧滑按钮
+    public DrawerLayout drawerLayout; // 侧滑栏
     private TextView titleCity; // 标题城市名
     private TextView titleUpdateTime; // 标题更新时间
     private TextView nowDegree; // 现在的温度
@@ -40,6 +50,7 @@ public class WeatherActivity extends AppCompatActivity {
     private TextView carWashText; // 洗车信息
     private TextView sportText; // 运动信息
 
+    private String curWeatherId; // 天气 id
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -53,7 +64,10 @@ public class WeatherActivity extends AppCompatActivity {
         setContentView(R.layout.activity_weather);
 
         weatherLayout = findViewById(R.id.weather_layout);
+        drawerLayout = findViewById(R.id.drawer_layout);
+        swipeRefresh = findViewById(R.id.swipe_refresh);
         backgroundImage = findViewById(R.id.background_image);
+        navButton = findViewById(R.id.nav_button);
         titleCity = findViewById(R.id.city_name);
         titleUpdateTime = findViewById(R.id.update_time);
         nowDegree = findViewById(R.id.degree_text);
@@ -65,6 +79,8 @@ public class WeatherActivity extends AppCompatActivity {
         carWashText = findViewById(R.id.carwash_text);
         sportText = findViewById(R.id.sport_text);
 
+        swipeRefresh.setColorSchemeResources(R.color.colorPrimary);
+
         SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
         String weatherStr = preferences.getString("weather", null);
         if (weatherStr == null) {
@@ -75,6 +91,7 @@ public class WeatherActivity extends AppCompatActivity {
         } else {
             // 有缓存信息, 则直接解析天气信息
             Weather weather = Utility.handleWeatherResponse(weatherStr);
+            curWeatherId = weather.getBasic().getWeatherId();
             if (weather != null) {
                 showWeatherInfo(weather);
             } else {
@@ -88,6 +105,20 @@ public class WeatherActivity extends AppCompatActivity {
         } else {
             Glide.with(this).load(pic).into(backgroundImage);
         }
+
+        swipeRefresh.setOnRefreshListener(new SwipeRefreshLayout.OnRefreshListener() {
+            @Override
+            public void onRefresh() {
+                requestWeatherInfo(curWeatherId);
+            }
+        });
+
+        navButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                drawerLayout.openDrawer(GravityCompat.START);
+            }
+        });
     }
 
     /**
@@ -142,12 +173,13 @@ public class WeatherActivity extends AppCompatActivity {
      *
      * @param weatherId
      */
-    private void requestWeatherInfo(String weatherId) {
+    public void requestWeatherInfo(final String weatherId) {
         String address = "http://guolin.tech/api/weather?cityid=" + weatherId + "&key=27e3cf8e77b041e3b24bc56c6b254d6a";
         HttpUtil.sendHttpRequest(address, new Callback() {
             @Override
             public void onFailure(Call call, IOException e) {
                 Toast.makeText(WeatherActivity.this, "网络错误, 请稍后重试", Toast.LENGTH_SHORT).show();
+                swipeRefresh.setRefreshing(false);
             }
 
             @Override
@@ -159,15 +191,20 @@ public class WeatherActivity extends AppCompatActivity {
                     @Override
                     public void run() {
                         if (weather != null && "ok".equals(weather.getStatus())) {
+                            curWeatherId = weather.getBasic().getWeatherId();
                             SharedPreferences.Editor editor = PreferenceManager
                                     .getDefaultSharedPreferences(WeatherActivity.this)
                                     .edit();
                             editor.putString("weather", weatherStr);
                             editor.apply();
                             showWeatherInfo(weather);
+                            // 启动自动更新服务
+                            Intent intent = new Intent(WeatherActivity.this, AutoUpdateService.class);
+                            startService(intent);
                         } else {
                             Toast.makeText(WeatherActivity.this, "获取天气信息失败", Toast.LENGTH_SHORT).show();
                         }
+                        swipeRefresh.setRefreshing(false);
                     }
                 });
             }
